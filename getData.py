@@ -8,7 +8,7 @@ def fetch_data_from_db():
         # Database connection parameters
         conn = psycopg2.connect(
             host="localhost",
-            port="5431",
+            port="5432",
             database="ecom",
             user="postgres",
             password="admin"
