@@ -43,23 +43,38 @@ def create_vector_db():
             if (idx + 1) % 100 == 0:
                 print(f"  Processed {idx + 1} rows in {table_name}")
     print(f"Chunking complete. Total chunks: {len(all_chunks)}")
-    print("Starting embedding process...")
+    print("Starting embedding process (parallel)...")
+    import concurrent.futures
     embeddings = []
-    for i, chunk in enumerate(all_chunks):
-        emb = get_embedding(chunk)
-        embeddings.append(emb)
-        if (i + 1) % 100 == 0 or (i + 1) == len(all_chunks):
-            print(f"  Embedded {i + 1}/{len(all_chunks)} chunks")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        future_to_chunk = {executor.submit(get_embedding, chunk): i for i, chunk in enumerate(all_chunks)}
+        for count, future in enumerate(concurrent.futures.as_completed(future_to_chunk), 1):
+            try:
+                emb = future.result()
+                embeddings.append(emb)
+            except Exception as e:
+                print(f"Error embedding chunk {future_to_chunk[future]}: {e}")
+            if count % 100 == 0 or count == len(all_chunks):
+                print(f"  Embedded {count}/{len(all_chunks)} chunks")
     embeddings = np.array(embeddings).astype('float32')
     print("Embedding complete.")
+    if embeddings.size == 0 or len(embeddings.shape) < 2:
+        print("No embeddings were generated. Please check your data and chunking process.")
+        return
     # Create Faiss index
     dim = embeddings.shape[1]
     index = faiss.IndexFlatL2(dim)
     index.add(embeddings)
-    # Save index and sources
+    # Save index and metadata together
     faiss.write_index(index, "faiss_index.bin")
-    pd.DataFrame(chunk_sources, columns=["table", "row_idx"]).to_csv("chunk_sources.csv", index=False)
-    print(f"Vector DB created with {len(all_chunks)} chunks.")
+    # Save metadata: table, row_idx, chunk text
+    np.savez(
+        "vector_db_meta.npz",
+        table=[t for t, _ in chunk_sources],
+        row_idx=[i for _, i in chunk_sources],
+        chunk_text=all_chunks
+    )
+    print(f"Vector DB created with {len(all_chunks)} chunks. Metadata saved to vector_db_meta.npz.")
 
 if __name__ == "__main__":
     create_vector_db()
